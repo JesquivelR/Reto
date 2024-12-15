@@ -1,0 +1,87 @@
+name: Crear Infraestructura Previa
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-infrastructure:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      BUCKET_NAME: ${{ secrets.TF_S3_BUCKET }}
+      TABLE_NAME: ${{ secrets.TF_DYNAMODB_TABLE }}
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+  
+      - name: Set up AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+            aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws-region: ${{ secrets.AWS_REGION }}
+  
+      - name: Crear un bucket S3 para el estado de Terraform
+        run: |
+  
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "Bucket $BUCKET_NAME already exists. Skipping creation."
+          else
+            aws s3api create-bucket \
+              --bucket "$BUCKET_NAME" \
+              --region "$AWS_REGION" \
+              --create-bucket-configuration LocationConstraint="$AWS_REGION"
+  
+            aws s3api put-bucket-versioning --bucket "$BUCKET_NAME" --versioning-configuration Status=Enabled --region "$AWS_REGION"
+  
+            aws s3api put-bucket-encryption --bucket "$BUCKET_NAME" --server-side-encryption-configuration '{
+              "Rules": [{
+                "ApplyServerSideEncryptionByDefault": {
+                  "SSEAlgorithm": "AES256"
+                }
+              }]
+            }' --region "$AWS_REGION"
+  
+            echo "Bucket $BUCKET_NAME created and configured."
+          fi
+  
+      - name: Crear tabla DynamoDB para Terraform lock
+        run: |
+  
+          if aws dynamodb describe-table --table-name "$TABLE_NAME" 2>/dev/null; then
+            echo "DynamoDB table $TABLE_NAME already exists. Skipping creation."
+          else
+            aws dynamodb create-table \
+              --table-name "$TABLE_NAME" \
+              --attribute-definitions AttributeName=LockID,AttributeType=S \
+              --key-schema AttributeName=LockID,KeyType=HASH \
+              --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5 \
+              --region "$AWS_REGION"
+  
+            echo "DynamoDB table $TABLE_NAME created."
+          fi
+  
+      - name: Crear repositorio ECR para app1
+        run: |
+          REPO_NAME="app1"
+  
+          if aws ecr describe-repositories --repository-names "$REPO_NAME" 2>/dev/null; then
+            echo "ECR repository $REPO_NAME already exists. Skipping creation."
+          else
+            aws ecr create-repository --repository-name "$REPO_NAME" --region "$AWS_REGION"
+            echo "ECR repository $REPO_NAME created."
+          fi
+  
+      - name: Crear repositorio ECR para app2
+        run: |
+          REPO_NAME="app2"
+  
+          if aws ecr describe-repositories --repository-names "$REPO_NAME" 2>/dev/null; then
+            echo "ECR repository $REPO_NAME already exists. Skipping creation."
+          else
+            aws ecr create-repository --repository-name "$REPO_NAME" --region "$AWS_REGION"
+            echo "ECR repository $REPO_NAME created."
+          fi
+  

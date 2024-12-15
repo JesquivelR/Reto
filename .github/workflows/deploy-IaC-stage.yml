@@ -1,0 +1,65 @@
+name: Despliegue o Destrucción de Infraestructura - Stage
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      DESTROY_INFRA: ${{ secrets.DESTROY_INFRA }}  # Variable que indica si se destruye la infraestructura
+      TF_PATH: terraform/environments/dev/ # Ruta donde están los archivos de Terraform
+      ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+      S3_BUCKET: ${{ secrets.TF_S3_BUCKET }}
+      S3_KEY: ${{ secrets.TF_S3_KEY }}
+      S3_REGION: ${{ secrets.AWS_REGION }}
+      DYNAMODB_TABLE: ${{ secrets.TF_DYNAMODB_TABLE }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.2
+
+      - name: Terraform Init
+        run: |
+          cd $TF_PATH
+          terraform init \
+            -backend-config="bucket=${{ env.S3_BUCKET }}" \
+            -backend-config="key=${{ env.S3_KEY }}" \
+            -backend-config="region=${{ env.S3_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.DYNAMODB_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Validate
+        run: |
+          cd $TF_PATH
+          terraform validate
+
+      - name: Terraform Plan
+        run: |
+          cd $TF_PATH
+          terraform plan -var "repositorio_ecr=${{ secrets.ECR_REGISTRY }}" -out=tfplan
+
+      - name: Apply Terraform
+        if: env.DESTROY_INFRA != 'True'
+        run: |
+          cd $TF_PATH
+          terraform apply -input=false tfplan
+
+      - name: Destroy Terraform Infrastructure
+        if: env.DESTROY_INFRA == 'True'
+        run: |
+          cd $TF_PATH
+          terraform destroy -var "repositorio_ecr=${{ secrets.ECR_REGISTRY }}" -auto-approve
